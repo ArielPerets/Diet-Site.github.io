@@ -4,7 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Ariel & Friends' Diet</title>
-<link rel="icon" type="image/svg" href="ariel_friends_diet_logo.svg">
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
 <style>
   :root {
@@ -105,7 +104,6 @@
   .tab-content { display: none; }
   .tab-content.active { display: block; }
 
-  /* Loading spinner */
   .spinner { display: inline-block; width: 20px; height: 20px; border: 2px solid rgba(255,255,255,0.4); border-top-color: #fff; border-radius: 50%; animation: spin 0.7s linear infinite; vertical-align: middle; margin-right: 6px; }
   @keyframes spin { to { transform: rotate(360deg); } }
 
@@ -180,10 +178,10 @@
     <button class="modal-close" onclick="closeLogin()">×</button>
     <h2>Instructor Login</h2>
     <p>Enter your credentials to manage the site.</p>
-    <div class="form-group"><label>Username</label><input type="text" id="login-user" placeholder="Username"></div>
+    <div class="form-group"><label>Email</label><input type="email" id="login-user" placeholder="your@email.com"></div>
     <div class="form-group"><label>Password</label><input type="password" id="login-pass" placeholder="Password" onkeydown="if(event.key==='Enter')doLogin()"></div>
-    <div class="error-msg" id="login-error">❌ Incorrect username or password.</div>
-    <button class="btn-primary" style="width:100%;margin-top:1rem;" onclick="doLogin()">Log In</button>
+    <div class="error-msg" id="login-error">❌ Incorrect email or password.</div>
+    <button class="btn-primary" style="width:100%;margin-top:1rem;" id="loginSubmitBtn" onclick="doLogin()">Log In</button>
   </div>
 </div>
 
@@ -192,6 +190,8 @@
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
   import { getFirestore, collection, doc, getDocs, addDoc, deleteDoc, setDoc, onSnapshot, orderBy, query }
     from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+  import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged }
+    from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyDRB0nU5B2JCe3N-4po6OaBKz7bgQ1e2WU",
@@ -202,12 +202,11 @@
     appId: "1:444121106347:web:910a5ae023ca2607b974ee"
   };
 
-  const app = initializeApp(firebaseConfig);
-  const db  = getFirestore(app);
+  const app  = initializeApp(firebaseConfig);
+  const db   = getFirestore(app);
+  const auth = getAuth(app);
 
   // ── STATE ──
-  const CORRECT_USER = 'Ariel';
-  const CORRECT_PASS = '10203040';
   let isAdmin = false;
   let videos  = [];
   let diet    = {
@@ -232,7 +231,6 @@
 
   // ── REAL-TIME LISTENERS ──
   try {
-    // Videos listener
     const videosQ = query(collection(db, 'videos'), orderBy('timestamp', 'desc'));
     onSnapshot(videosQ, snap => {
       videos = snap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -240,12 +238,36 @@
       setSyncStatus('live');
     }, () => setSyncStatus('error'));
 
-    // Diet listener
     onSnapshot(doc(db, 'config', 'diet'), snap => {
       if (snap.exists()) diet = snap.data();
       renderAll();
     });
   } catch(e) { setSyncStatus('error'); }
+
+  // ── AUTH STATE LISTENER ──
+  // This is the key part: Firebase tells us when the user is logged in or out.
+  // No credentials ever stored in the code.
+  onAuthStateChanged(auth, user => {
+    if (user) {
+      // User is signed in
+      isAdmin = true;
+      document.querySelectorAll('.admin-only').forEach(el => el.style.display = 'block');
+      const btn = document.getElementById('loginToggleBtn');
+      btn.textContent = '🚪 Log Out';
+      btn.classList.add('logout');
+      btn.onclick = doLogout;
+      renderAll();
+    } else {
+      // User is signed out
+      isAdmin = false;
+      document.querySelectorAll('.admin-only').forEach(el => el.style.display = 'none');
+      const btn = document.getElementById('loginToggleBtn');
+      btn.textContent = '🔐 Instructor Login';
+      btn.classList.remove('logout');
+      btn.onclick = window.openLogin;
+      renderAll();
+    }
+  });
 
   // ── RENDER ──
   function renderAll() { renderDiet(); renderVideos(); renderHome(); }
@@ -262,7 +284,6 @@
     display.innerHTML = html;
     preview.innerHTML = html;
 
-    // Populate admin meal editor
     const rows = document.getElementById('meal-rows');
     if (!rows) return;
     rows.innerHTML = '';
@@ -375,32 +396,38 @@
     rows.appendChild(div);
   };
 
-  // ── LOGIN ──
-  window.openLogin  = () => document.getElementById('loginModal').classList.add('open');
-  window.closeLogin = () => { document.getElementById('loginModal').classList.remove('open'); document.getElementById('login-error').style.display='none'; };
-  window.doLogin    = () => {
-    const u = document.getElementById('login-user').value.trim();
-    const p = document.getElementById('login-pass').value;
-    if (u === CORRECT_USER && p === CORRECT_PASS) {
-      isAdmin = true;
-      closeLogin();
-      document.querySelectorAll('.admin-only').forEach(el => el.style.display = 'block');
-      const btn = document.getElementById('loginToggleBtn');
-      btn.textContent = '🚪 Log Out';
-      btn.classList.add('logout');
-      btn.onclick = () => {
-        isAdmin = false;
-        document.querySelectorAll('.admin-only').forEach(el => el.style.display='none');
-        btn.textContent = '🔐 Instructor Login';
-        btn.classList.remove('logout');
-        btn.onclick = window.openLogin;
-        renderAll();
-      };
-      renderAll();
-    } else {
-      document.getElementById('login-error').style.display = 'block';
-    }
+  // ── LOGIN / LOGOUT ──
+  window.openLogin  = () => {
+    document.getElementById('loginModal').classList.add('open');
+    document.getElementById('login-error').style.display = 'none';
   };
+  window.closeLogin = () => {
+    document.getElementById('loginModal').classList.remove('open');
+    document.getElementById('login-error').style.display = 'none';
+  };
+
+  // Sign in with Firebase Auth — no password ever touches your code
+  window.doLogin = async function() {
+    const email = document.getElementById('login-user').value.trim();
+    const pass  = document.getElementById('login-pass').value;
+    const errEl = document.getElementById('login-error');
+    const btn   = document.getElementById('loginSubmitBtn');
+    errEl.style.display = 'none';
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span>Logging in...';
+    try {
+      await signInWithEmailAndPassword(auth, email, pass);
+      closeLogin();
+    } catch(e) {
+      errEl.style.display = 'block';
+    }
+    btn.disabled = false;
+    btn.innerHTML = 'Log In';
+  };
+
+  async function doLogout() {
+    await signOut(auth);
+  }
 
   // ── TABS ──
   window.showTab = (name, el) => {
